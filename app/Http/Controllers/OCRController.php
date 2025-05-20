@@ -7,6 +7,66 @@ use Illuminate\Support\Facades\Http;
 
 class OCRController extends Controller
 {
+
+
+    public function extractText(Request $request)
+{
+    $request->validate([
+        'image' => 'required|image|max:5120', // 5MB max
+    ]);
+
+    $image = $request->file('image');
+    $apiKey = env('TOGETHER_API_KEY');
+    $model = 'meta-llama/Llama-Vision-Free';
+
+    // Encode image
+    $base64Image = base64_encode(file_get_contents($image));
+    $imageDataUrl = 'data:image/' . $image->getClientOriginalExtension() . ';base64,' . $base64Image;
+
+    // Build prompt
+    $systemPrompt = <<<EOT
+Convert the provided image into Markdown format. Ensure that all content from the business card is included, such as name, designation, phone, email, address, and any medicine names like Tab or Cap.
+
+Requirements:
+- Output Only Markdown: Return solely the Markdown content without any additional explanations or comments.
+- No Delimiters: Do not use code fences or delimiters like ```markdown.
+- Complete Content: Do not omit any part of the card.
+EOT;
+
+    // Send request
+    $response = Http::withToken($apiKey)->post('https://api.together.xyz/v1/chat/completions', [
+        'model' => $model,
+        'messages' => [
+            [
+                'role' => 'user',
+                'content' => [
+                    ['type' => 'text', 'text' => $systemPrompt],
+                    ['type' => 'image_url', 'image_url' => ['url' => $imageDataUrl]],
+                ],
+            ],
+        ],
+    ]);
+
+    if ($response->successful()) {
+        $markdown = $response['choices'][0]['message']['content'] ?? '(No result)';
+
+        // Extract medicine names containing Tab, Cap, Syrup, etc.
+        preg_match_all('/\b(?:Tab\.?|Cap\.?|Syrup\.?|Injection\.?)\s+[A-Z0-9][\w\-+.]*/i', $markdown, $matches);
+
+        $medicines = $matches[0] ?? [];
+
+        return view('result', [
+            'markdown' => $markdown,
+            'medicines' => $medicines,
+        ]);
+    }
+
+    return response()->json(['error' => 'OCR failed', 'details' => $response->body()], 500);
+}
+
+
+
+
     public function extractText_old(Request $request)
     {
         $request->validate([
